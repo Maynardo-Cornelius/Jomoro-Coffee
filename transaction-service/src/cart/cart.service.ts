@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddToCartDto } from './dto/add-to-cart.dto';
+import { UpdateCartDto } from './dto/update-cart.dto';
 import axios from 'axios';
 
 @Injectable()
@@ -57,11 +58,11 @@ export class CartService {
       const response = await axios.get(`http://localhost:3002/products/${dto.product_id}`);
       product = response.data;
     } catch (error) {
-      throw new NotFoundException('Produk tidak ditemukan di Product Service');
+      throw new NotFoundException('Product not found in Product Service');
     }
 
     if (dto.quantity > product.stock) {
-      throw new BadRequestException('Kuantitas melebihi stok yang tersedia');
+      throw new BadRequestException('Quantity exceeds available stock');
     }
 
     let cart = await this.prisma.carts.findFirst({ where: { user_id: userId } });
@@ -75,7 +76,7 @@ export class CartService {
     });
 
     if (existingItem) {
-      throw new BadRequestException('Produk sudah ada di dalam keranjang');
+      throw new BadRequestException('Product already exists in the cart');
     }
 
     await this.prisma.cart_items.create({
@@ -86,6 +87,78 @@ export class CartService {
       },
     });
 
-    return { message: 'Produk berhasil ditambahkan ke keranjang' };
+    return { message: 'Product successfully added to the cart' };
+  }
+
+  async updateCartItem(userId: number, productId: number, dto: UpdateCartDto) {
+    let product;
+
+    try {
+      const response = await axios.get(`http://localhost:3002/products/${productId}`);
+      product = response.data;
+    } catch (error) {
+      throw new NotFoundException('Product not found in Product Service');
+    }
+
+    if (dto.quantity > product.stock) {
+      throw new BadRequestException('Quantity exceeds available stock');
+    }
+
+    const cart = await this.prisma.carts.findFirst({ where: { user_id: userId } });
+
+    if (!cart) {
+      throw new NotFoundException('Cart not found');
+    }
+
+    const existingItem = await this.prisma.cart_items.findFirst({
+      where: { cart_id: cart.id, product_id: productId },
+    });
+
+    if (!existingItem) {
+      throw new NotFoundException('Product not found in the cart');
+    }
+
+    await this.prisma.cart_items.update({
+      where: { id: existingItem.id },
+      data: { quantity: dto.quantity },
+    });
+
+    return { message: 'Product quantity successfully updated' };
+  }
+
+  async deleteCartItem(userId: number, productId: number) {
+    const cart = await this.prisma.carts.findFirst({ where: { user_id: userId } });
+
+    if (!cart) {
+      throw new NotFoundException('Cart not found');
+    }
+
+    const existingItem = await this.prisma.cart_items.findFirst({
+      where: { cart_id: cart.id, product_id: productId },
+    });
+
+    if (!existingItem) {
+      throw new NotFoundException('Product not found in the cart');
+    }
+
+    await this.prisma.cart_items.delete({
+      where: { id: existingItem.id },
+    });
+
+    return { message: 'Product successfully removed from the cart' };
+  }
+
+  async clearCart(userId: number) {
+    const cart = await this.prisma.carts.findFirst({ where: { user_id: userId } });
+
+    if (!cart) {
+      throw new NotFoundException('Cart not found');
+    }
+
+    await this.prisma.cart_items.deleteMany({
+      where: { cart_id: cart.id },
+    });
+
+    return { message: 'Cart successfully cleared' };
   }
 }
