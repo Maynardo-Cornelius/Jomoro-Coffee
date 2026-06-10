@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import axios from 'axios';
 
@@ -6,7 +6,48 @@ import axios from 'axios';
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async checkout(userId: number) {
+  async getOrders(userId: number) {
+    return this.prisma.orders.findMany({
+      where: { user_id: userId },
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
+  async getOrderDetails(userId: number, orderId: number) {
+    const order = await this.prisma.orders.findFirst({
+      where: { id: orderId, user_id: userId },
+      include: { order_details: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Pesanan tidak ditemukan');
+    }
+
+    const detailsWithProductName = await Promise.all(
+      order.order_details.map(async (detail) => {
+        try {
+          const { data } = await axios.get(`http://localhost:3002/products/${detail.product_id}`);
+          return {
+            product_id: detail.product_id,
+            name: data.name,
+            quantity: detail.quantity,
+            price: detail.price,
+          };
+        } catch (error) {
+          return {
+            product_id: detail.product_id,
+            name: 'Produk Tidak Diketahui',
+            quantity: detail.quantity,
+            price: detail.price,
+          };
+        }
+      })
+    );
+
+    return detailsWithProductName;
+  }
+
+  async checkout(userId: number, token: string) {
     const cart = await this.prisma.carts.findFirst({
       where: { user_id: userId },
       include: { cart_items: true },
@@ -16,7 +57,8 @@ export class OrdersService {
       throw new BadRequestException('Keranjang belanja Anda masih kosong!');
     }
 
-    const orderDetails:any[] = [];
+    const orderDetails: any[] = [];
+
     for (const item of cart.cart_items) {
       try {
         const response = await axios.get(`http://localhost:3002/products/${item.product_id}`);
@@ -27,8 +69,17 @@ export class OrdersService {
           quantity: item.quantity,
           price: product.price, 
         });
+
+        await axios.post(
+          `http://localhost:3002/admin/products/${item.product_id}/reduce`,
+          { quantity: item.quantity },
+          { headers: { Authorization: token } }
+        );
+
       } catch (error) {
-        throw new NotFoundException(`Produk dengan ID ${item.product_id} tidak ditemukan di Product Service`);
+        throw new InternalServerErrorException(
+          `Gagal memproses produk ID ${item.product_id}. Pastikan produk tersedia dan stok mencukupi.`
+        );
       }
     }
 
@@ -39,26 +90,12 @@ export class OrdersService {
           create: orderDetails, 
         },
       },
-      include: {
-        order_details: true,
-      },
     });
 
     await this.prisma.cart_items.deleteMany({
       where: { cart_id: cart.id },
     });
 
-    return {
-      message: 'Checkout berhasil diproses',
-      order,
-    };
-  }
-
-  async getOrders(userId: number) {
-    return this.prisma.orders.findMany({
-      where: { user_id: userId },
-      include: { order_details: true },
-      orderBy: { created_at: 'desc' },
-    });
+    return { message: 'Checkout berhasil diproses' };
   }
 }

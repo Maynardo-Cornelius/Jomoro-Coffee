@@ -10,10 +10,11 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
-  @Post('checkout')
+  @Post()
   @ApiOperation({ summary: 'Melakukan checkout dan mengosongkan keranjang' })
   checkout(@Request() req: any) {
-    return this.ordersService.checkout(req.user.id);
+    const token = req.headers.authorization;
+    return this.ordersService.checkout(req.user.id, token);
   }
 
   @Get()
